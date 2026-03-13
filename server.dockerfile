@@ -1,4 +1,4 @@
-FROM rust:1.84 AS chef
+FROM rust:1.88 AS chef
 
 # Stop if a command fails
 RUN set -eux
@@ -7,7 +7,7 @@ RUN set -eux
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
 # cargo-chef will be cached from the second build onwards
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --locked
 WORKDIR /app
 
 FROM chef AS planner
