@@ -11,3 +11,19 @@ The `build_scripts` directory contains various utilities for configuring and run
  - `run-local-cluster.sh` runs a 3 server cluster in separate local processes.
  - `docker-compose.yml` docker compose for a 3 server cluster.
  - See `benchmarks/README.md` for benchmarking scripts 
+
+# How to run and test api_shim.rs
+- Run `bash run-local-cluster.sh` (ensure you're in the `build_scripts` directory)
+- In another terminal, run `API_LISTEN_ADDR=127.0.0.1:7001 CONFIG_FILE=./client-1-config.toml cargo run --manifest-path ../Cargo.toml --bin api-shim`
+- In a third terminal, test the endpoints via `curl -i "http://127.0.0.1:7001/health"`, `curl -i -X PUT "http://127.0.0.1:7001/kv/x" --data-binary "1"` or `curl -i "http://127.0.0.1:7001/kv/x"`
+Optional reset before rerun
+- `pkill -f '/target/debug/server' || true`
+- `pkill -f '/target/debug/api-shim' || true`
+
+## One-command smoke test script
+From `build_scripts`, run:
+- `./run-api-shim-smoke.sh`
+
+Useful options:
+- `API_PORT=7002 ./run-api-shim-smoke.sh` (use a different port)
+- `KEEP_RUNNING=1 ./run-api-shim-smoke.sh` (do not auto-stop services)
