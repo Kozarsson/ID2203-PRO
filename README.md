@@ -27,3 +27,61 @@ From `build_scripts`, run:
 Useful options:
 - `API_PORT=7002 ./run-api-shim-smoke.sh` (use a different port)
 - `KEEP_RUNNING=1 ./run-api-shim-smoke.sh` (do not auto-stop services)
+
+# Jepsen linearizability testing
+
+The `jepsen-omnipaxos/` directory contains a Clojure Jepsen test suite that verifies OmniPaxos maintains linearizability under network partitions and node crashes.
+
+## Repository layout
+
+```
+omnipaxos-kv/              — Rust OmniPaxos KV server + HTTP shim (this repo)
+jepsen-omnipaxos/          — Clojure Jepsen test suite
+jepsen-main/               — Jepsen Docker environment (control node + DB nodes)
+```
+
+## Architecture
+
+```
+Jepsen control node
+  worker 0  →  HTTP :7000  →  n1 api-shim  →  n1 OmniPaxos server  ─┐
+  worker 1  →  HTTP :7000  →  n2 api-shim  →  n2 OmniPaxos server  ─┼─ consensus
+  worker 2  →  HTTP :7000  →  n3 api-shim  →  n3 OmniPaxos server  ─┘
+```
+
+All reads are linearizable because they go through `ClientMessage::Append` (same consensus path as writes), assigning each read a specific position in the log.
+
+## How to run Jepsen tests
+
+```bash
+# 1. Build Rust binaries
+cargo build --release --bin server --bin api-shim
+
+# 2. Start Jepsen Docker environment
+cd jepsen-main/docker && bin/up --n 3
+
+# 3. Copy binaries and test suite to control node
+docker cp target/release/server jepsen-control:/root/server
+docker cp target/release/api-shim jepsen-control:/root/api-shim
+docker cp jepsen-omnipaxos jepsen-control:/root/jepsen-omnipaxos
+
+# 4. Open control node shell
+bin/console
+
+# 5. Run the test (inside control node)
+cd /root/jepsen-omnipaxos
+lein run -- test --nodes n1,n2,n3 --time-limit 120 \
+  --server-bin /root/server --shim-bin /root/api-shim
+
+# 6. Copy results back — run from repo root (ID2203-PRO/)
+docker cp jepsen-control:/root/jepsen-omnipaxos/store ./jepsen-results
+```
+
+## Test structure
+
+| File | Purpose |
+|------|---------|
+| `core.clj` | Entry point — wires db, client, generator, checker, nemesis |
+| `client.clj` | HTTP client translating ops to PUT/GET requests |
+| `db.clj` | Deploys and manages binaries on nodes via SSH |
+| `nemesis.clj` | Fault injection: network partitions + node crashes |
