@@ -141,18 +141,18 @@
                                         {:model (model/register)})
                         :timeline     (timeline/html)})
           :generator (gen/phases
-                       ; Establish some initial state before the isolation
+                       ; Warmup: establish initial state
                        (->> (gen/mix [r w])
                             (gen/stagger 1/10)
                             (gen/clients)
                             (gen/time-limit 10))
-                       ; Isolate all nodes while firing ops (expect timeouts)
-                       (gen/nemesis (total-isolation-generator))
+                       ; Isolate all nodes while clients keep firing
                        (->> (gen/mix [r w])
                             (gen/stagger 1/10)
                             (gen/clients)
-                            (gen/time-limit 40))
-                       ; Ensure partition is healed before final check
+                            (gen/nemesis (total-isolation-generator))
+                            (gen/time-limit 60))
+                       ; Ensure healed before final check
                        (gen/nemesis {:type :info :f :heal-all})
                        (gen/log "Partition healed, running 60s verification")
                        (gen/sleep 5)

@@ -118,16 +118,35 @@
     (gen/sleep 10)))
 
 (defn total-isolation-nemesis
-  "Partitions all three nodes into separate components using iptables so that
-   no node can reach any other. No quorum is possible during the isolation.
+  "Blocks all inter-node traffic with iptables so no quorum is possible.
    Uses iptables (not process kills) so connections resume when healed."
   []
-  (nemesis/compose
-    {{:isolate-all :start
-      :heal-all    :stop}
-     (nemesis/partitioner
-       (fn [test]
-         (nemesis/complete-grudge (map vector (:nodes test)))))}))
+  (reify nemesis/Nemesis
+    (setup! [this test] this)
+
+    (invoke! [this test op]
+      (case (:f op)
+        :isolate-all
+        (do (c/on-nodes test
+              (fn [test node]
+                (doseq [peer (remove #{node} (:nodes test))]
+                  (c/exec :iptables :-I :INPUT  :-s peer :-j :DROP)
+                  (c/exec :iptables :-I :OUTPUT :-d peer :-j :DROP))))
+            (assoc op :type :info :value :isolated))
+
+        :heal-all
+        (do (c/on-nodes test
+              (fn [_ _]
+                (c/exec :iptables :-F :INPUT)
+                (c/exec :iptables :-F :OUTPUT)))
+            (assoc op :type :info :value :healed))))
+
+    (teardown! [this test]
+      (c/on-nodes test
+        (fn [_ _]
+          (c/exec :iptables :-F :INPUT)
+          (c/exec :iptables :-F :OUTPUT))))))
+
 
 (defn total-isolation-generator
   "Isolates all nodes from each other for 30s, then heals."
