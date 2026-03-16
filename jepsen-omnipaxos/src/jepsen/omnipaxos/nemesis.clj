@@ -43,6 +43,42 @@
 
       (teardown! [this test]))))
 
+(defn majority-down-nemesis
+  "Kills a majority of nodes (all but one), then restarts them on recover.
+   With quorum size 2 out of 3, the surviving minority node cannot commit
+   new values — any :ok responses would be a safety violation."
+  []
+  (let [downed (atom [])]
+    (reify nemesis/Nemesis
+      (setup! [this test] this)
+
+      (invoke! [this test op]
+        (case (:f op)
+          :majority-down
+          (let [; Keep only the first node alive; kill the rest
+                victims (rest (:nodes test))]
+            (info "nemesis downing majority" victims)
+            (c/on-nodes test victims
+              (fn [_ _]
+                (cu/stop-daemon! db/shim-bin   db/shim-pid)
+                (cu/stop-daemon! db/server-bin db/server-pid)))
+            (reset! downed victims)
+            (assoc op :type :info :value victims))
+
+          :majority-up
+          (let [nodes @downed]
+            (info "nemesis recovering majority" nodes)
+            (c/on-nodes test nodes
+              (fn [_ node]
+                (db/start-server!)
+                (Thread/sleep 3000)
+                (db/start-shim!)
+                (db/await-shim! node)))
+            (reset! downed [])
+            (assoc op :type :info :value nodes))))
+
+      (teardown! [this test]))))
+
 (defn omnipaxos-nemesis
   "Combined nemesis: random-halves partition + single-node crash/restart."
   []
@@ -50,6 +86,12 @@
     {{:start-partition :start
       :stop-partition  :stop} (nemesis/partition-random-halves)
      #{:crash-node :recover-node} (crash-nemesis)}))
+
+(defn majority-down-nemesis-composed
+  "Nemesis for the majority-down test: only majority kill/recover."
+  []
+  (nemesis/compose
+    {#{:majority-down :majority-up} (majority-down-nemesis)}))
 
 (defn nemesis-generator
   "Cycles through: partition → heal → crash → recover."
@@ -64,3 +106,35 @@
      (gen/sleep 10)
      {:type :info :f :recover-node}
      (gen/sleep 5)]))
+
+(defn majority-down-generator
+  "Brings majority down, holds for 30s, then recovers."
+  []
+  (gen/phases
+    (gen/sleep 5)
+    {:type :info :f :majority-down}
+    (gen/sleep 30)
+    {:type :info :f :majority-up}
+    (gen/sleep 10)))
+
+(defn total-isolation-nemesis
+  "Partitions all three nodes into separate components using iptables so that
+   no node can reach any other. No quorum is possible during the isolation.
+   Uses iptables (not process kills) so connections resume when healed."
+  []
+  (nemesis/compose
+    {{:isolate-all :start
+      :heal-all    :stop}
+     (nemesis/partitioner
+       (fn [test]
+         (nemesis/complete-grudge (map vector (:nodes test)))))}))
+
+(defn total-isolation-generator
+  "Isolates all nodes from each other for 30s, then heals."
+  []
+  (gen/phases
+    (gen/sleep 5)
+    {:type :info :f :isolate-all}
+    (gen/sleep 30)
+    {:type :info :f :heal-all}
+    (gen/sleep 5)))

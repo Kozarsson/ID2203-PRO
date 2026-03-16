@@ -53,27 +53,58 @@ All reads are linearizable because they go through `ClientMessage::Append` (same
 
 ## How to run Jepsen tests
 
+### Setup (required for both tests)
+
 ```bash
-# 1. Build Rust binaries
+# 1. Build Rust binaries — run from repo root (ID2203-PRO/)
 cargo build --release --bin server --bin api-shim
 
 # 2. Start Jepsen Docker environment
-cd jepsen-main/docker && bin/up --n 3
+cd jepsen-main/docker && bin/up -n 3
 
-# 3. Copy binaries and test suite to control node
+# 3. Copy binaries and test suite to control node — run from repo root
 docker cp target/release/server jepsen-control:/root/server
 docker cp target/release/api-shim jepsen-control:/root/api-shim
 docker cp jepsen-omnipaxos jepsen-control:/root/jepsen-omnipaxos
 
 # 4. Open control node shell
-bin/console
+cd jepsen-main/docker && bin/console
+```
 
-# 5. Run the test (inside control node)
+### Test 1: linearizability under partitions and crashes
+
+Verifies that OmniPaxos maintains linearizability while randomly partitioning the network and crashing individual nodes.
+
+```bash
+# Inside the control node:
 cd /root/jepsen-omnipaxos
-lein run -- test --nodes n1,n2,n3 --time-limit 120 \
-  --server-bin /root/server --shim-bin /root/api-shim
+lein run -- test --nodes n1,n2,n3 --time-limit 180 --server-bin /root/server --shim-bin /root/api-shim
+```
 
-# 6. Copy results back — run from repo root (ID2203-PRO/)
+### Test 2: no progress when majority is down
+
+Verifies that OmniPaxos refuses to commit writes when only 1 of 3 nodes is alive (no quorum). Any write returning `:ok` during the outage is flagged as a safety violation.
+
+```bash
+# Inside the control node:
+cd /root/jepsen-omnipaxos
+lein run -- majority-down --nodes n1,n2,n3 --server-bin /root/server --shim-bin /root/api-shim
+```
+
+### Test 3: total isolation (all nodes partitioned from each other)
+
+Partitions all three nodes into separate components via iptables for 30s so no quorum is possible. Unlike Test 2, processes stay running — only packets are dropped. Once the partition heals the cluster should reconnect and resume normal operation. Checks linearizability across the full history including the recovery window.
+
+```bash
+# Inside the control node:
+cd /root/jepsen-omnipaxos
+lein run -- total-isolation --nodes n1,n2,n3 --server-bin /root/server --shim-bin /root/api-shim
+```
+
+### Copy results back
+
+```bash
+# Run from repo root (ID2203-PRO/) after either test:
 docker cp jepsen-control:/root/jepsen-omnipaxos/store ./jepsen-results
 ```
 
